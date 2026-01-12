@@ -1,0 +1,10 @@
+[package]
+name = "tokant"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rand = "0.9.2"
+rayon = "1.8"
+dashmap = "6.1.0"
+fxhash = "0.2"
