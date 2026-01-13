@@ -7,8 +7,8 @@ use std::time::Instant;
 const Q: f64 = 1.1; // Reduced to flatten hierarchy (less exponential reward for length)
 const INITIAL_PHEROMONE: f64 = 1.0; 
 const ALPHA: f64 = 1.0; 
-const BETA: f64 = 3.0;  
-const MAX_TOKEN_LEN: usize = 18; 
+const BETA: f64 = 2.0;  
+const MAX_TOKEN_LEN: usize = 10; 
 const MIN_SAVE_SCORE: f64 = 3.0;
 
 struct AntColony<'a> {
@@ -107,8 +107,8 @@ fn natural_selection(&mut self) {
     let mut scores: Vec<f64> = self.pheromones.iter().map(|r| *r.value()).collect();
     let total_count = scores.len();
 
-    // 2. Determine Survival Threshold (Top 30%)
-    let survival_rate = 0.3;
+    // 2. Determine Survival Threshold (Top 25%)
+    let survival_rate = 0.2;
     let keep_count = (total_count as f64 * survival_rate).max(1.0) as usize;
 
     // Sort descending (Best scores first)
@@ -120,26 +120,23 @@ fn natural_selection(&mut self) {
 
     // Compute Mean of survivors
     let mean: f64 = survivors.iter().sum::<f64>() / survivors.len() as f64;
-
     // Compute Std Dev of survivors
     let var = survivors.iter()
         .map(|v| (v - mean).powi(2))
         .sum::<f64>() / survivors.len() as f64;
     let std = var.sqrt().max(1e-9);
 
-    // Variance shrink factor (tweak this!)
-    let shrink = 0.40;
+    let max_value = 3000.0; 
 
     // Threshold = worst survivor
     let threshold = survivors.last().copied().unwrap();
 
     println!(
-        "  Natural Selection: Keeping top {:.0}% | Threshold: {:.4} | Mean: {:.4} | Std: {:.4} | Shrink: {:.2}",
+        "  Natural Selection: Keeping top {:.0}% | Threshold: {:.4} | Mean: {:.4} | Std: {:.4} ",
         survival_rate * 100.0,
         threshold,
         mean,
-        std,
-        shrink
+        std
     );
 
     // 3. Prune & Normalize
@@ -148,15 +145,15 @@ fn natural_selection(&mut self) {
             return false; // eliminate
         }
 
-        // Survivor: normalize around mean with variance shrink
-        let z = (*v - mean) / std;
-        *v = mean + z * shrink;
+        if *v > max_value {
+            *v = max_value ;
+            return true ;
+        }
 
         true
     });
 }
 
-    /// Deposit pheromones based on the user's formula
     fn deposit(&self, path: &[&'a str], _steps: usize) {
         // User formula: (len(token)-1)^Q
         // We REMOVED the divisor. Dividing by steps punishes correct sentences (many words).
@@ -209,7 +206,7 @@ fn main() {
     let mut colony = AntColony::new();
     println!("Loaded {} lines. Starting training...", lines.len());
 
-    let iterations = 100; 
+    let iterations = 20; 
     let start_time = Instant::now();
 
     for gen in 1..=iterations {
