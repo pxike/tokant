@@ -117,8 +117,15 @@ impl<'a> AntColony<'a> {
         println!("  Natural Selection: Keeping top {:.0}% (Threshold: {:.4}). Active Tokens: {}", 
             keep_ratio * 100.0, threshold, active_tokens);
 
-        // 2. Prune Weak Links
-        self.pheromones.retain(|_, v| *v >= threshold);
+        // 2. Prune Weak Links & Evaporate Survivors
+        // "Trim 20% of every score" -> Multiply by 0.8
+        self.pheromones.retain(|_, v| {
+            if *v < threshold {
+                return false; // Eliminate
+            }
+            *v *= 0.60; // Evaporate
+            true
+        });
     }
 
     /// Deposit pheromones using Logistic Growth (Soft Cap)
