@@ -4,12 +4,11 @@ use rayon::prelude::*;
 use std::fs;
 use std::time::Instant;
 
-const Q: f64 = 1.1; // Reduced to flatten hierarchy (less exponential reward for length)
+const Q: f64 = 1.0; // Reduced to flatten hierarchy (less exponential reward for length)
 const INITIAL_PHEROMONE: f64 = 1.0; 
 const ALPHA: f64 = 1.0; 
 const BETA: f64 = 2.0;  
 const MAX_TOKEN_LEN: usize = 10; 
-const MIN_SAVE_SCORE: f64 = 3.0;
 
 struct AntColony<'a> {
     // Shared pheromone map: Token -> Strength
@@ -62,7 +61,7 @@ impl<'a> AntColony<'a> {
                 let tau = self.get_pheromone(token_slice);
                 let eta = self.get_heuristic(token_slice);
                 
-                let prob = tau.powf(ALPHA) * eta;
+                let prob = tau.ln().max(0.0001) * eta;
                 total_prob += prob;
                 candidates.push((token_slice, prob));
             }
@@ -97,72 +96,53 @@ impl<'a> AntColony<'a> {
     }
 
     /// Genetic Algorithm Selection:
-    /// Keep Top 25%, Normalize them to their Median, Prune the rest.
-fn natural_selection(&mut self) {
-    use std::cmp::Ordering;
+    /// Keep Top 20% by pruning the bottom 80%.
+    fn natural_selection(&self) {
+        if self.pheromones.is_empty() { return; }
 
-    if self.pheromones.is_empty() { return; }
-
-    // 1. Collect all scores
-    let mut scores: Vec<f64> = self.pheromones.iter().map(|r| *r.value()).collect();
-    let total_count = scores.len();
-
-    // 2. Determine Survival Threshold (Top 25%)
-    let survival_rate = 0.2;
-    let keep_count = (total_count as f64 * survival_rate).max(1.0) as usize;
-
-    // Sort descending (Best scores first)
-    scores.sort_unstable_by(|a, b| b.partial_cmp(a).unwrap_or(Ordering::Equal));
-
-    // Survivors slice
-    let keep_count = keep_count.min(total_count);
-    let survivors = &scores[..keep_count];
-
-    // Compute Mean of survivors
-    let mean: f64 = survivors.iter().sum::<f64>() / survivors.len() as f64;
-    // Compute Std Dev of survivors
-    let var = survivors.iter()
-        .map(|v| (v - mean).powi(2))
-        .sum::<f64>() / survivors.len() as f64;
-    let std = var.sqrt().max(1e-9);
-
-    let max_value = 3000.0; 
-
-    // Threshold = worst survivor
-    let threshold = survivors.last().copied().unwrap();
-
-    println!(
-        "  Natural Selection: Keeping top {:.0}% | Threshold: {:.4} | Mean: {:.4} | Std: {:.4} ",
-        survival_rate * 100.0,
-        threshold,
-        mean,
-        std
-    );
-
-    // 3. Prune & Normalize
-    self.pheromones.retain(|_, v| {
-        if *v < threshold {
-            return false; // eliminate
-        }
-
-        if *v > max_value {
-            *v = max_value ;
-            return true ;
-        }
-
-        true
-    });
-}
-
-    fn deposit(&self, path: &[&'a str], _steps: usize) {
-        // User formula: (len(token)-1)^Q
-        // We REMOVED the divisor. Dividing by steps punishes correct sentences (many words).
+        let active_tokens = self.pheromones.len();
         
+        // 1. Estimate Pruning Threshold via Sampling
+        // Sorting 6 million items is slow. We can just purge anything below a moving average
+        // or just strict top-k. Let's stick to the user's sort for now but optimize logic.
+        
+        let mut scores: Vec<f64> = self.pheromones.iter().map(|r| *r.value()).collect();
+        // Sort descending
+        scores.sort_unstable_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        
+        let keep_ratio = 0.20;
+        let cut_index = ((active_tokens as f64 * keep_ratio) as usize).max(1);
+        let threshold = scores[cut_index.min(active_tokens - 1)];
+
+        println!("  Natural Selection: Keeping top {:.0}% (Threshold: {:.4}). Active Tokens: {}", 
+            keep_ratio * 100.0, threshold, active_tokens);
+
+        // 2. Prune Weak Links
+        self.pheromones.retain(|_, v| *v >= threshold);
+    }
+
+    /// Deposit pheromones using Logistic Growth (Soft Cap)
+    /// This allows new tokens to grow fast, but prevents established ones from becoming infinite.
+    fn deposit(&self, path: &[&'a str], _steps: usize) {
+        const MAX_SCORE: f64 = 100000000.0; // The Carrying Capacity (K)
+
         for token in path {
             let len = token.len();
             if len > 1 {
-                let numerator = ((len - 1) as f64).powf(Q);
-                *self.pheromones.entry(token).or_insert(INITIAL_PHEROMONE) += numerator;
+                let reward = ((len - 1) as f64).powf(Q);
+                
+                // DashMap allows atomic updates via entry API
+                let mut entry = self.pheromones.entry(token).or_insert(INITIAL_PHEROMONE);
+                let current_val = *entry;
+                
+                // Logistic Update: dP = Reward * (1 - P/K)
+                // If P is small, dP ≈ Reward (Fast Growth)
+                // If P -> K, dP -> 0 (Saturation)
+                let delta = reward * (1.0 - current_val / MAX_SCORE);
+                
+                if delta > 0.0 {
+                    *entry += delta;
+                }
             }
         }
     }
@@ -257,7 +237,6 @@ fn main() {
     // Save full vocabulary
     // Filter out garbage (low score tokens that didn't repeat enough)
     let final_vocab: Vec<_> = all_tokens.into_iter()
-        .filter(|(_t, s)| *s > MIN_SAVE_SCORE) 
         .collect();
 
     println!("\nSaving {} tokens to 'tokens.txt' (Pruned from {})...", final_vocab.len(), colony.pheromones.len());
