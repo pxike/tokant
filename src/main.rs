@@ -4,11 +4,11 @@ use rayon::prelude::*;
 use std::fs;
 use std::time::Instant;
 
-const Q: f64 = 1.0; // Reduced to flatten hierarchy (less exponential reward for length)
+const Q: f64 = 3.0; // Heavily reward length (Length^3) to beat frequency
 const INITIAL_PHEROMONE: f64 = 1.0; 
 const ALPHA: f64 = 1.0; 
-const BETA: f64 = 2.0;  
-const MAX_TOKEN_LEN: usize = 10; 
+const BETA: f64 = 4.0;  // Strong bias towards length exploration
+const MAX_TOKEN_LEN: usize = 10; // Increase max length to find longer words
 
 struct AntColony<'a> {
     // Shared pheromone map: Token -> Strength
@@ -110,7 +110,7 @@ impl<'a> AntColony<'a> {
         // Sort descending
         scores.sort_unstable_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
         
-        let keep_ratio = 0.20;
+        let keep_ratio = 0.50; // Relaxed selection (50%) to give long tokens time to survive
         let cut_index = ((active_tokens as f64 * keep_ratio) as usize).max(1);
         let threshold = scores[cut_index.min(active_tokens - 1)];
 
@@ -118,12 +118,12 @@ impl<'a> AntColony<'a> {
             keep_ratio * 100.0, threshold, active_tokens);
 
         // 2. Prune Weak Links & Evaporate Survivors
-        // "Trim 20% of every score" -> Multiply by 0.8
+        // Trim 20% of every score (keeping them hungry)
         self.pheromones.retain(|_, v| {
             if *v < threshold {
                 return false; // Eliminate
             }
-            *v *= 0.60; // Evaporate
+            *v *= 0.8;
             true
         });
     }
@@ -157,7 +157,7 @@ impl<'a> AntColony<'a> {
 
 fn main() {
     // 1. Load Data
-    let file_path = "text8"; // The 100MB corpus
+    let file_path = "AllCombined.txt"; // The 100MB corpus
     println!("Loading {}...", file_path);
     
     // Read file. Unwraps are for simplicity in this example.
@@ -171,8 +171,8 @@ fn main() {
     
     // Chunking Logic for Parallelism
     // If the file is 1 huge line (like text8), lines() gives 1 item => No parallelism.
-    // We break it into fixed-size chunks (e.g., 500 chars) ensuring valid UTF-8.
-    let chunk_size = 500;
+    // We break it into fixed-size chunks (e.g., 1000 chars) ensuring valid UTF-8.
+    let chunk_size = 1000;
     
     // Collecting char indices is memory intensive for 100MB (vector of tuples).
     // Let's use a smarter iterator approach or just byte slicing if ASCII (text8 is ASCII).

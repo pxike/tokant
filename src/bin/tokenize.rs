@@ -18,17 +18,20 @@ impl Tokenizer {
             let line = line?;
             if line.starts_with("Token\t") { continue; } // Header
             
-            if let Some((token, _score)) = line.rsplit_once('\t') {
+            if let Some((token, score_str)) = line.rsplit_once('\t') {
                 // Determine max len (in chars) for optimization
                 let char_count = token.chars().count();
                 if char_count > max_len {
                     max_len = char_count;
                 }
                 
+                // Parse Score
+                let score = score_str.trim().parse::<f64>().unwrap_or(0.0);
+
                 // We assume tokens.txt has escaped chars like \n, \r
                 // We need to unescape them to match correctly against real text
                 let unescaped = token.replace("\\n", "\n").replace("\\r", "\r");
-                vocab.insert(unescaped, 0.0); // We don't use score for MaxMatch currently
+                vocab.insert(unescaped, score); 
             }
         }
         
@@ -44,14 +47,15 @@ impl Tokenizer {
         while cursor < char_count {
             let mut best_match: Option<String> = None;
             let mut best_len = 0;
+            let mut best_score = -1.0;
 
-            // Greedy Search: Try longest possible slice first
+            // Greedy Search: Try ALL possible slices, pick highest Score
             // Start from min(remaining_chars, max_token_len)
             let remaining = char_count - cursor;
             let search_depth = std::cmp::min(remaining, self.max_token_len);
             
-            // Iterate length j from search_depth down to 1
-            for j in (1..=search_depth).rev() {
+            // Iterate length j from 1 to search_depth
+            for j in 1..=search_depth {
                  let start_byte = chars[cursor].0;
                  
                  // Calculate end byte
@@ -64,10 +68,14 @@ impl Tokenizer {
                  
                  let slice = &text[start_byte..end_byte];
                  
-                 if self.vocab.contains_key(slice) {
-                     best_match = Some(slice.to_string());
-                     best_len = j; 
-                     break; // Found longest immediately
+                 if let Some(&score) = self.vocab.get(slice) {
+                     // Check if this token is "better" than what we found so far
+                     // Priority: Higher Score > Longer Length
+                     if score > best_score || (score == best_score && j > best_len) {
+                        best_match = Some(slice.to_string());
+                        best_len = j; 
+                        best_score = score;
+                     }
                  }
             }
 

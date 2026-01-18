@@ -10,3 +10,5 @@ run this command
 ```
  cargo run --release --bin tokenize "the ant colony optimization algorithm is very interesting to observe"
 ```
+### Example
+![alt text](image.png)
